@@ -139,6 +139,7 @@ tr.tot td{font-weight:600;border-top:2px solid var(--line);border-bottom:0}
 #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:max(18px,env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:60;max-width:90vw}
 #toast.on{opacity:1}#toast.err{background:var(--outsrc);color:#fff}
 .note{color:var(--muted);font-size:13px}
+button.kpi{text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%}button.kpi:hover{border-color:var(--muted)}.kpi.on{border-color:var(--outsrc);box-shadow:inset 0 0 0 1px var(--outsrc)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 @media (max-width:560px){header h1{font-size:28px}.kpi .v{font-size:34px}.brow{grid-template-columns:minmax(70px,32%) 1fr 66px}}
 </style>
@@ -224,6 +225,11 @@ tr.tot td{font-weight:600;border-top:2px solid var(--line);border-bottom:0}
       <div class="tw scrolly" id="drvTable"></div>
     </div>
     <div class="panel">
+      <div class="phead"><h2>Unserved VRs</h2><span class="note" id="unsCount"></span></div>
+      <div class="sub">VR numbers that have a Trip count of 0. A VR number is listed once, however many rows it has.</div>
+      <div class="tw" id="unsTable"></div>
+    </div>
+    <div class="panel">
       <div class="phead"><h2>Office summary</h2></div>
       <div class="sub">Every measure side by side. Click a row to filter by office.</div>
       <div class="tw" id="officeTable"></div>
@@ -255,7 +261,9 @@ const plabel=p=>{const [y,m]=p.split('-');return MONTHS[+m-1]+' '+y};
 const MLAB={vr:'VRs',trip:'Trips',km:'km'};
 const KEY='vrmonitor.v1',EKEY='vrmonitor.empty';
 let askDel=null;let datasets={}; let measure='vr'; let sortKey='vr',sortDir=1,page=0;
-const F={period:new Set(),type:new Set(),office:new Set(),loc:new Set(),req:new Set(),drv:new Set(),dst:new Set(),q:''};
+const F={period:new Set(),type:new Set(),office:new Set(),loc:new Set(),req:new Set(),drv:new Set(),dst:new Set(),q:'',uns:false};
+let UNS=new Set();
+function clearAll(){Object.keys(F).forEach(k=>{if(k==='q')F.q='';else if(k==='uns')F.uns=false;else F[k].clear()})}
 const FIELD={type:'type',office:'office',loc:'loc',req:'req',drv:'driver',dst:'dest'};
 const FNAME={type:'Type',office:'Office',loc:'Location',req:'Requestor',drv:'Driver',dst:'Destination',period:'Month'};
 
@@ -349,32 +357,34 @@ function load(){let ok=false;try{const s=localStorage.getItem(KEY);if(s){JSON.pa
   if(!ok&&!emp){const d=sampleDataset();datasets[d.period]=d}}
 
 /* ---------- aggregation ---------- */
-function newG(){return{v:{all:new Set(),in:new Set(),out:new Set()},t:{all:0,in:0,out:0},k:{all:0,in:0,out:0},m:{all:0,in:0,out:0}}}
-function add(g,r){const s=r.type==='Out Source'?'out':'in';g.v.all.add(r.vr);g.v[s].add(r.vr);g.t.all+=r.trip;g.t[s]+=r.trip;g.k.all+=r.km;g.k[s]+=r.km;const mm=r.maint||0;g.m.all+=mm;g.m[s]+=mm}
+function newG(){return{v:{all:new Set(),in:new Set(),out:new Set()},u:{all:new Set(),in:new Set(),out:new Set()},t:{all:0,in:0,out:0},k:{all:0,in:0,out:0},m:{all:0,in:0,out:0}}}
+function add(g,r){const s=r.type==='Out Source'?'out':'in';g.v.all.add(r.vr);g.v[s].add(r.vr);g.t.all+=r.trip;g.t[s]+=r.trip;if(r.trip===0){g.u.all.add(r.vr);g.u[s].add(r.vr)}g.k.all+=r.km;g.k[s]+=r.km;const mm=r.maint||0;g.m.all+=mm;g.m[s]+=mm}
 function group(rows,fn){const m=new Map();rows.forEach(r=>{const k=fn(r);if(k==null)return;let g=m.get(k);if(!g){g=newG();m.set(k,g)}add(g,r)});return m}
 function val(g,m,s){return m==='vr'?g.v[s].size:m==='trip'?g.t[s]:m==='km'?g.k[s]:g.m[s]}
 function allRows(){const out=[];Object.values(datasets).forEach(d=>{if(!F.period.size||F.period.has(d.period))out.push(...d.rows)});return out}
 function match(r,excl){
+  if(F.uns&&r.trip!==0)return false;
   for(const k in FIELD){if(k!==excl&&F[k].size&&!F[k].has(r[FIELD[k]]))return false}
   if(F.q){const s=(r.vr+' '+r.req+' '+r.purpose+' '+r.driver+' '+r.office+' '+(r.dest||'')).toLowerCase();if(!s.includes(F.q))return false}
   return true}
 const rowsFor=excl=>allRows().filter(r=>match(r,excl));
 function tipHtml(title,g){
-  const row=(n,s)=>'<tr><td>'+n+'</td><td class="num">'+fmt(g.v[s].size)+'</td><td class="num">'+fmt(g.t[s])+'</td><td class="num">'+fmt(g.k[s])+'</td><td class="num">'+peso(g.m[s])+'</td></tr>';
-  return '<b>'+esc(title)+'</b><table><tr><th></th><th>VRs</th><th>Trips</th><th>km</th><th>Recovery</th></tr>'+row('All','all')+row('In House','in')+row('Out Source','out')+'</table>'}
+  const row=(n,s)=>'<tr><td>'+n+'</td><td class="num">'+fmt(g.v[s].size)+'</td><td class="num">'+fmt(g.t[s])+'</td><td class="num">'+fmt(g.u[s].size)+'</td><td class="num">'+fmt(g.k[s])+'</td><td class="num">'+peso(g.m[s])+'</td></tr>';
+  return '<b>'+esc(title)+'</b><table><tr><th></th><th>VRs</th><th>Trips</th><th>Unserved</th><th>km</th><th>Recovery</th></tr>'+row('All','all')+row('In House','in')+row('Out Source','out')+'</table>'}
 
 /* ---------- render ---------- */
+function computeUns(){}
 function render(){
+  computeUns();
   const ds=Object.values(datasets).sort((a,b)=>a.period<b.period?-1:1);
   const rows=rowsFor(null);
   const sel=F.period.size?[...F.period].sort().map(plabel).join(', '):(ds.length>1?'All loaded months':(ds[0]?plabel(ds[0].period):'No data'));
   const tot=newG();rows.forEach(r=>add(tot,r));
-  $('#subtitle').textContent=sel+' · '+fmt(tot.v.all.size)+' vehicle requests · '+fmt(tot.t.all)+' trips · '+fmt(tot.k.all)+' km · '+peso(tot.m.all)+' maintenance recovery';
+  $('#subtitle').textContent=sel+' · '+fmt(tot.v.all.size)+' VRs · '+fmt(tot.t.all)+' trips · '+fmt(tot.u.all.size)+' unserved · '+fmt(tot.k.all)+' km · '+peso(tot.m.all)+' maintenance recovery';
   renderData(ds);renderControls();renderKpis(tot);renderTrend(rows);
   renderBars('#locBars','loc',r=>r.loc,8);renderBars('#officeBars','office',r=>r.office,10);renderBars('#reqBars','req',r=>r.req,10);renderBars('#drvBars','drv',r=>r.driver,10);renderDrvTable();renderBars('#dstBars','dst',r=>r.dest,18);renderMap();
-  renderOfficeTable();renderVrTable(rows);
-  const mixed=[...group(rows,r=>r.vr).values()].filter(g=>g.v.in.size&&g.v.out.size).length;
-  $('#foot').textContent='VR count is the number of distinct VR numbers. Trips add up the Trip count column. Kilometers add up KM Total. Maintenance recovery adds up the Maintenance column, in pesos. Destinations are read from place names in the Purpose text unless the file has a Destination column.'+(mixed?' '+mixed+' VR'+(mixed>1?'s have':' has')+' both in-house and outsourced legs, so In House + Out Source can exceed the total.':'')}
+  renderOfficeTable();renderUnserved(rows);renderVrTable(rows);
+  $('#foot').textContent='VR count is the number of distinct VR numbers: a VR number that appears on many rows counts once. Trip count adds up the Trip count column. Unserved VRs are distinct VR numbers with a Trip count of 0. Kilometers add up KM Total. Maintenance recovery adds up the Maintenance column, in pesos. Destinations are read from place names in the Purpose text unless the file has a Destination column.'}
 function renderData(ds){
   const s=ds.some(d=>d.sample);
   $('#hint').innerHTML=!ds.length?'<b>Nothing loaded.</b> Drop your monthly VR file here or use Upload.<br><button type="button" class="btn ghost" id="loadsample" style="margin-top:6px;padding:4px 10px">Load the sample file</button>':s?'<b>Showing the sample September file.</b> <span class="tag">Sample</span><br>Drop your monthly VR file here or use Upload. Uploading a month that is already loaded replaces it.'
@@ -390,13 +400,15 @@ function renderControls(){
   document.querySelectorAll('#measure button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.m===measure));
   document.querySelectorAll('#typeseg button').forEach(b=>b.setAttribute('aria-pressed',(b.dataset.t===''&&!F.type.size)||F.type.has(b.dataset.t)));
   const chips=[];['period','office','loc','req','drv','dst'].forEach(k=>F[k].forEach(v=>chips.push([k,v])));
-  $('#active').innerHTML=chips.length?'<span class="lbl">Filters</span>'+chips.map(([k,v])=>'<button type="button" class="fchip" data-k="'+k+'" data-v="'+esc(v)+'"><span>'+FNAME[k]+':</span> '+esc(k==='period'?plabel(v):v)+' ×</button>').join('')+'<button type="button" class="btn ghost" id="clear" style="padding:3px 10px">Clear all</button>':''}
+  const nch=chips.length+(F.uns?1:0);
+  $('#active').innerHTML=nch?'<span class="lbl">Filters</span>'+(F.uns?'<button type="button" class="fchip" data-uns><span>Show:</span> Unserved VRs only ×</button>':'')+chips.map(([k,v])=>'<button type="button" class="fchip" data-k="'+k+'" data-v="'+esc(v)+'"><span>'+FNAME[k]+':</span> '+esc(k==='period'?plabel(v):v)+' ×</button>').join('')+'<button type="button" class="btn ghost" id="clear" style="padding:3px 10px">Clear all</button>':''}
 function renderKpis(t){
-  const inV=t.v.in.size,outV=t.v.out.size,s=inV+outV||1;
+  const inV=t.v.in.size,outV=t.v.out.size,s=inV+outV||1,uns=t.u.all.size,tv=t.v.all.size;
   const avg=t.t.in?t.k.in/t.t.in:0;
-  const tile=(k,v,sub,extra,dot)=>'<div class="kpi"><div class="k">'+(dot?'<i class="dot '+dot+'"></i>':'')+k+'</div><div class="v">'+v+'</div><div class="s">'+sub+'</div>'+(extra||'')+'</div>';
+  const tile=(k,v,sub,extra,dot,attr)=>'<'+(attr?'button type="button" '+attr+' class="kpi click'+(F.uns?' on':'')+'"':'div class="kpi"')+'><div class="k">'+(dot?'<i class="dot '+dot+'"></i>':'')+k+'</div><div class="v">'+v+'</div><div class="s">'+sub+'</div>'+(extra||'')+(attr?'</button>':'</div>');
   $('#kpis').innerHTML=
-    tile('VR count',fmt(t.v.all.size),'distinct VR numbers')+
+    tile('VR count',fmt(tv),'distinct VR numbers')+
+    tile('Unserved VRs',fmt(uns),'trip count 0 · '+(tv?(uns/tv*100).toFixed(1):'0')+'% of VRs'+(uns?' · click to list':''),'',null,'data-uns')+
     tile('Trip count',fmt(t.t.all),fmt(t.t.in)+' in house · '+fmt(t.t.out)+' outsourced')+
     tile('Kilometers',fmt(t.k.all),avg?fmt(avg)+' km per in-house trip':'no km logged')+
     tile('Maintenance recovery',peso(t.m.all),t.m.all?peso(t.m.all/Math.max(1,t.t.all))+' per trip · '+peso(t.m.in)+' in house':'none recorded')+
@@ -461,7 +473,7 @@ function renderMap(){
   const pts=[];let nsV=0;
   m.forEach((g,k)=>{const e=DM[k];if(e)pts.push({k,g,lat:e[2],lon:e[3],v:val(g,measure,'all')});else nsV+=g.v.all.size});
   $('#mapSub').textContent='Bubble size shows '+MNAME()+'. Click a bubble to filter.';
-  const placed=pts.reduce((a,p)=>a+p.g.v.all.size,0);
+  
   $('#mapNote').textContent=Object.keys(datasets).length?(pts.length+' places on the map. '+fmt(nsV)+' VRs have no place in the purpose and are not plotted. City trips from the Quezon City and Tacloban offices with no place are shown as local trips. Add a Destination column to your file to be exact.'):'';
   let s='<svg viewBox="0 0 '+PH.W+' '+PH.H+'" role="img" aria-label="Map of destinations in the Philippines"><path class="land" d="'+PH.d+'"/>';
   if(!pts.length){el.innerHTML=s+'</svg>';return}
@@ -475,6 +487,11 @@ function renderMap(){
     if(boxes.some(o=>b[0]<o[2]&&b[2]>o[0]&&b[1]<o[3]&&b[3]>o[1]))return;
     boxes.push(b);s+='<text class="mlab" x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" text-anchor="'+(left?'end':'start')+'">'+esc(p.k)+'</text>'});
   el.innerHTML=s+'</svg>'}
+function renderUnserved(rows){
+  const m=new Map();rows.forEach(r=>{if(r.trip!==0)return;let o=m.get(r.vr);if(!o){o={...r,zero:0};m.set(r.vr,o)}o.zero++});
+  const arr=[...m.values()].sort((a,b)=>a.vr.localeCompare(b.vr,undefined,{numeric:true}));
+  $('#unsCount').textContent=fmt(arr.length)+' VR'+(arr.length===1?'':'s');
+  $('#unsTable').innerHTML=arr.length?'<table><thead><tr><th>VR no.</th><th>Requestor</th><th>Office in charge</th><th>Location</th><th>VR type</th><th>Driver</th><th>Destination</th><th class="r">Rows with 0 trips</th><th>Departure → return</th><th>Purpose</th></tr></thead><tbody>'+arr.map(o=>'<tr><td class="num" style="white-space:nowrap">'+esc(o.vr)+'</td><td>'+esc(o.req)+'</td><td>'+esc(o.office)+'</td><td>'+esc(o.loc)+'</td><td>'+typePill(o.type)+'</td><td>'+esc(o.driver)+'</td><td>'+esc(o.dest)+'</td><td class="r num">'+fmt(o.zero)+'</td><td class="num" style="white-space:nowrap">'+esc(o.dep)+'</td><td><div class="purpose" title="'+esc(o.purpose)+'">'+esc(o.purpose)+'</div></td></tr>').join('')+'</tbody></table>':'<div class="empty">'+(Object.keys(datasets).length?'No unserved VRs. No row has a trip count of 0.':emptyMsg())+'</div>'}
 function renderDrvTable(){
   const rows=rowsFor('drv');const m=group(rows,r=>r.driver);
   const arr=[...m].sort((a,b)=>b[1].k.all-a[1].k.all||b[1].t.all-a[1].t.all);
@@ -483,19 +500,19 @@ function renderDrvTable(){
 function renderOfficeTable(){
   const rows=rowsFor('office');const m=group(rows,r=>r.office);const t=newG();rows.forEach(r=>add(t,r));
   const arr=[...m].sort((a,b)=>b[1].v.all.size-a[1].v.all.size);
-  const tr=(n,g,cls,attr)=>'<tr class="'+cls+'" '+attr+'><td>'+esc(n)+'</td><td class="r num">'+fmt(g.v.all.size)+'</td><td class="r num">'+fmt(g.v.in.size)+'</td><td class="r num">'+fmt(g.v.out.size)+'</td><td class="r num">'+fmt(g.t.all)+'</td><td class="r num">'+fmt(g.k.all)+'</td><td class="r num">'+peso(g.m.all)+'</td></tr>';
-  $('#officeTable').innerHTML=arr.length?'<table><thead><tr><th>Office in charge</th><th class="r">VRs</th><th class="r">In House VRs</th><th class="r">Out Source VRs</th><th class="r">Trips</th><th class="r">Kilometers</th><th class="r">Maint. recovery</th></tr></thead><tbody>'+
+  const tr=(n,g,cls,attr)=>'<tr class="'+cls+'" '+attr+'><td>'+esc(n)+'</td><td class="r num">'+fmt(g.v.all.size)+'</td><td class="r num">'+fmt(g.v.in.size)+'</td><td class="r num">'+fmt(g.v.out.size)+'</td><td class="r num">'+fmt(g.u.all.size)+'</td><td class="r num">'+fmt(g.t.all)+'</td><td class="r num">'+fmt(g.k.all)+'</td><td class="r num">'+peso(g.m.all)+'</td></tr>';
+  $('#officeTable').innerHTML=arr.length?'<table><thead><tr><th>Office in charge</th><th class="r">VRs</th><th class="r">In House VRs</th><th class="r">Out Source VRs</th><th class="r">Unserved VRs</th><th class="r">Trips</th><th class="r">Kilometers</th><th class="r">Maint. recovery</th></tr></thead><tbody>'+
     arr.map(([k,g])=>tr(k,g,'click','data-bk="office" data-bv="'+esc(k)+'"')).join('')+tr('Total',t,'tot','')+'</tbody></table>':'<div class="empty">'+emptyMsg()+'</div>'}
 function renderVrTable(rows){
   const m=new Map();
-  rows.forEach(r=>{let o=m.get(r.vr);if(!o){o={vr:r.vr,dest:r.dest,drivers:new Set(),req:r.req,office:r.office,loc:r.loc,types:new Set(),trips:0,km:0,maint:0,dep:r.dep,purpose:r.purpose,period:r.period};m.set(r.vr,o)}o.types.add(r.type);o.drivers.add(r.driver);o.trips+=r.trip;o.km+=r.km;o.maint+=r.maint||0});
+  rows.forEach(r=>{let o=m.get(r.vr);if(!o){o={vr:r.vr,dest:r.dest,drivers:new Set(),req:r.req,office:r.office,loc:r.loc,types:new Set(),trips:0,zero:0,km:0,maint:0,dep:r.dep,purpose:r.purpose,period:r.period};m.set(r.vr,o)}o.types.add(r.type);o.drivers.add(r.driver);o.trips+=r.trip;if(r.trip===0)o.zero++;o.km+=r.km;o.maint+=r.maint||0});
   let arr=[...m.values()].map(o=>({...o,type:o.types.size>1?'Both':[...o.types][0],driver:[...o.drivers].join('; ')}));
   const num_=['trips','km','maint'].includes(sortKey);
   arr.sort((a,b)=>(num_?a[sortKey]-b[sortKey]:String(a[sortKey]).localeCompare(String(b[sortKey]),undefined,{numeric:true}))*sortDir);
   const PS=12,pages=Math.max(1,Math.ceil(arr.length/PS));page=Math.min(page,pages-1);
   const cols=[['vr','VR no.'],['req','Requestor'],['office','Office in charge'],['loc','Location'],['type','VR type'],['driver','Driver'],['dest','Destination'],['trips','Trips',1],['km','km',1],['maint','Maint. recovery',1],['dep','Departure → return'],['purpose','Purpose']];
   const th=cols.map(([k,n,r])=>'<th class="'+(r?'r':'')+'"><button type="button" data-sort="'+k+'">'+n+(sortKey===k?(sortDir>0?' ▲':' ▼'):'')+'</button></th>').join('');
-  $('#vrTable').innerHTML=arr.length?'<table><thead><tr>'+th+'</tr></thead><tbody>'+arr.slice(page*PS,page*PS+PS).map(o=>'<tr><td class="num" style="white-space:nowrap">'+esc(o.vr)+'</td><td>'+esc(o.req)+'</td><td>'+esc(o.office)+'</td><td>'+esc(o.loc)+'</td><td>'+typePill(o.type)+'</td><td>'+esc(o.driver)+'</td><td>'+esc(o.dest)+'</td><td class="r num">'+fmt(o.trips)+'</td><td class="r num">'+fmt(o.km)+'</td><td class="r num">'+(o.maint?peso(o.maint):'–')+'</td><td class="num" style="white-space:nowrap">'+esc(o.dep)+'</td><td><div class="purpose" title="'+esc(o.purpose)+'">'+esc(o.purpose)+'</div></td></tr>').join('')+'</tbody></table>':'<div class="empty">'+emptyMsg()+'</div>';
+  $('#vrTable').innerHTML=arr.length?'<table><thead><tr>'+th+'</tr></thead><tbody>'+arr.slice(page*PS,page*PS+PS).map(o=>'<tr><td class="num" style="white-space:nowrap">'+esc(o.vr)+(o.zero?' <span class="pill">'+(o.trips===0?'Unserved':'Partly unserved')+'</span>':'')+'</td><td>'+esc(o.req)+'</td><td>'+esc(o.office)+'</td><td>'+esc(o.loc)+'</td><td>'+typePill(o.type)+'</td><td>'+esc(o.driver)+'</td><td>'+esc(o.dest)+'</td><td class="r num">'+fmt(o.trips)+'</td><td class="r num">'+fmt(o.km)+'</td><td class="r num">'+(o.maint?peso(o.maint):'–')+'</td><td class="num" style="white-space:nowrap">'+esc(o.dep)+'</td><td><div class="purpose" title="'+esc(o.purpose)+'">'+esc(o.purpose)+'</div></td></tr>').join('')+'</tbody></table>':'<div class="empty">'+emptyMsg()+'</div>';
   $('#vrCount').textContent=fmt(arr.length)+' VRs';
   $('#pager').innerHTML=arr.length>PS?'<button class="btn" type="button" data-pg="-1"'+(page===0?' disabled':'')+'>Previous</button><span>Page '+(page+1)+' of '+pages+'</span><button class="btn" type="button" data-pg="1"'+(page>=pages-1?' disabled':'')+'>Next</button>':''}
 
@@ -508,9 +525,10 @@ document.addEventListener('click',e=>{
   if(b=t.closest('[data-p]')){askDel=null;return toggle('period',b.dataset.p)}
   if(b=t.closest('[data-ask]')){askDel=b.dataset.ask;return render()}
   if(t.closest('[data-cancel]')){askDel=null;return render()}
-  if(b=t.closest('[data-rm]')){const p=b.dataset.rm;askDel=null;if(p==='*'){datasets={};Object.keys(F).forEach(k=>k==='q'?F.q='':F[k].clear());$('#q').value='';sortKey='vr';sortDir=1}else{delete datasets[p];F.period.delete(p)}save();page=0;return render()}
+  if(b=t.closest('[data-rm]')){const p=b.dataset.rm;askDel=null;if(p==='*'){datasets={};clearAll();$('#q').value='';sortKey='vr';sortDir=1}else{delete datasets[p];F.period.delete(p)}save();page=0;return render()}
+  if(t.closest('[data-uns]')){F.uns=!F.uns;page=0;return render()}
   if(b=t.closest('.fchip'))return toggle(b.dataset.k,b.dataset.v);
-  if(t.closest('#clear')){Object.keys(F).forEach(k=>k==='q'?F.q='':F[k].clear());$('#q').value='';page=0;return render()}
+  if(t.closest('#clear')){clearAll();$('#q').value='';page=0;return render()}
   if(b=t.closest('#measure button')){measure=b.dataset.m;return render()}
   if(b=t.closest('#typeseg button')){F.type.clear();if(b.dataset.t)F.type.add(b.dataset.t);page=0;return render()}
   if(b=t.closest('[data-sort]')){const k=b.dataset.sort;if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=['trips','km','maint'].includes(k)?-1:1}return render()}

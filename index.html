@@ -166,7 +166,7 @@ tr.tot td{font-weight:600;border-top:2px solid var(--line);border-bottom:0}
         <button type="button" data-m="vr" aria-pressed="true">VR count</button>
         <button type="button" data-m="trip" aria-pressed="false">Trips</button>
         <button type="button" data-m="km" aria-pressed="false">Kilometers</button>
-        <button type="button" data-m="maint" aria-pressed="false">Maintenance</button>
+        <button type="button" data-m="maint" aria-pressed="false">Maintenance recovery</button>
       </div></div>
     <div class="ctl"><span class="lbl">VR type</span>
       <div class="seg" id="typeseg">
@@ -219,7 +219,7 @@ tr.tot td{font-weight:600;border-top:2px solid var(--line);border-bottom:0}
       <div class="bars" id="drvBars"></div>
     </div>
     <div class="panel p6">
-      <div class="phead"><h2>Km and maintenance by driver</h2></div>
+      <div class="phead"><h2>Km and maintenance recovery by driver</h2></div>
       <div class="sub">Outsourced rows show the vendor and log no km. Click a row to filter.</div>
       <div class="tw scrolly" id="drvTable"></div>
     </div>
@@ -250,7 +250,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const fmt=n=>Math.round(n).toLocaleString('en-US');
 const peso=n=>'₱'+fmt(n);
 const fv=n=>measure==='maint'?peso(n):fmt(n);
-const MNAME=()=>({vr:'VR count',trip:'trips',km:'kilometers',maint:'maintenance amount'}[measure]);
+const MNAME=()=>({vr:'VR count',trip:'trips',km:'kilometers',maint:'maintenance recovery'}[measure]);
 const plabel=p=>{const [y,m]=p.split('-');return MONTHS[+m-1]+' '+y};
 const MLAB={vr:'VRs',trip:'Trips',km:'km'};
 const KEY='vrmonitor.v1',EKEY='vrmonitor.empty';
@@ -316,9 +316,9 @@ function parseSheetRows(aoa){
   const C={vr:pick('vrnumber'),req:pick('requisitioner','requestor','requester'),purpose:pick('purpose'),
     dep:pick('departurereturndate','departuredate'),office:pick('officeincharge','office'),loc:pick('locationtype','location'),
     type:pick('vrtype','type'),driver:pick('driver'),date:pick('datetimeout','dateout'),
-    kmt:pick('kmtotal','km','kilometers'),kmf:pick('kmfrom'),kmto:pick('kmto'),trip:pick('tripcount','trips'),maint:pick('maintenance','maintenanceamount','maintenancecost'),dest:pick('destination','destinations','destinationtravelled','destinationtraveled','placevisited','travelto')};
+    kmt:pick('kmtotal','km','kilometers'),kmf:pick('kmfrom'),kmto:pick('kmto'),trip:pick('tripcount','trips'),maint:pick('maintenancerecovery','maintenance','maintenanceamount','maintenancecost'),dest:pick('destination','destinations','destinationtravelled','destinationtraveled','placevisited','travelto')};
   const miss=[];if(C.type<0)miss.push('VR Type');if(C.office<0)miss.push('Office in Charge');if(C.loc<0)miss.push('Location Type');
-  if(C.req<0)miss.push('Requisitioner');if(C.kmt<0&&C.kmto<0)miss.push('KM Total');if(C.trip<0)miss.push('Trip count');if(C.maint<0)miss.push('Maintenance');
+  if(C.req<0)miss.push('Requisitioner');if(C.kmt<0&&C.kmto<0)miss.push('KM Total');if(C.trip<0)miss.push('Trip count');
   const g=(r,i)=>i>=0?r[i]:null;const out=[];
   for(let i=h+1;i<aoa.length;i++){const r=aoa[i]||[];
     let km=C.kmt>=0?num(r[C.kmt]):(C.kmto>=0&&C.kmf>=0?Math.max(0,num(r[C.kmto])-num(r[C.kmf])):0);
@@ -361,7 +361,7 @@ function match(r,excl){
 const rowsFor=excl=>allRows().filter(r=>match(r,excl));
 function tipHtml(title,g){
   const row=(n,s)=>'<tr><td>'+n+'</td><td class="num">'+fmt(g.v[s].size)+'</td><td class="num">'+fmt(g.t[s])+'</td><td class="num">'+fmt(g.k[s])+'</td><td class="num">'+peso(g.m[s])+'</td></tr>';
-  return '<b>'+esc(title)+'</b><table><tr><th></th><th>VRs</th><th>Trips</th><th>km</th><th>Maint.</th></tr>'+row('All','all')+row('In House','in')+row('Out Source','out')+'</table>'}
+  return '<b>'+esc(title)+'</b><table><tr><th></th><th>VRs</th><th>Trips</th><th>km</th><th>Recovery</th></tr>'+row('All','all')+row('In House','in')+row('Out Source','out')+'</table>'}
 
 /* ---------- render ---------- */
 function render(){
@@ -369,12 +369,12 @@ function render(){
   const rows=rowsFor(null);
   const sel=F.period.size?[...F.period].sort().map(plabel).join(', '):(ds.length>1?'All loaded months':(ds[0]?plabel(ds[0].period):'No data'));
   const tot=newG();rows.forEach(r=>add(tot,r));
-  $('#subtitle').textContent=sel+' · '+fmt(tot.v.all.size)+' vehicle requests · '+fmt(tot.t.all)+' trips · '+fmt(tot.k.all)+' km · '+peso(tot.m.all)+' maintenance';
+  $('#subtitle').textContent=sel+' · '+fmt(tot.v.all.size)+' vehicle requests · '+fmt(tot.t.all)+' trips · '+fmt(tot.k.all)+' km · '+peso(tot.m.all)+' maintenance recovery';
   renderData(ds);renderControls();renderKpis(tot);renderTrend(rows);
   renderBars('#locBars','loc',r=>r.loc,8);renderBars('#officeBars','office',r=>r.office,10);renderBars('#reqBars','req',r=>r.req,10);renderBars('#drvBars','drv',r=>r.driver,10);renderDrvTable();renderBars('#dstBars','dst',r=>r.dest,18);renderMap();
   renderOfficeTable();renderVrTable(rows);
   const mixed=[...group(rows,r=>r.vr).values()].filter(g=>g.v.in.size&&g.v.out.size).length;
-  $('#foot').textContent='VR count is the number of distinct VR numbers. Trips add up the Trip count column. Kilometers add up KM Total. Maintenance adds up the Maintenance column, in pesos. Destinations are read from place names in the Purpose text unless the file has a Destination column.'+(mixed?' '+mixed+' VR'+(mixed>1?'s have':' has')+' both in-house and outsourced legs, so In House + Out Source can exceed the total.':'')}
+  $('#foot').textContent='VR count is the number of distinct VR numbers. Trips add up the Trip count column. Kilometers add up KM Total. Maintenance recovery adds up the Maintenance column, in pesos. Destinations are read from place names in the Purpose text unless the file has a Destination column.'+(mixed?' '+mixed+' VR'+(mixed>1?'s have':' has')+' both in-house and outsourced legs, so In House + Out Source can exceed the total.':'')}
 function renderData(ds){
   const s=ds.some(d=>d.sample);
   $('#hint').innerHTML=!ds.length?'<b>Nothing loaded.</b> Drop your monthly VR file here or use Upload.<br><button type="button" class="btn ghost" id="loadsample" style="margin-top:6px;padding:4px 10px">Load the sample file</button>':s?'<b>Showing the sample September file.</b> <span class="tag">Sample</span><br>Drop your monthly VR file here or use Upload. Uploading a month that is already loaded replaces it.'
@@ -399,7 +399,7 @@ function renderKpis(t){
     tile('VR count',fmt(t.v.all.size),'distinct VR numbers')+
     tile('Trip count',fmt(t.t.all),fmt(t.t.in)+' in house · '+fmt(t.t.out)+' outsourced')+
     tile('Kilometers',fmt(t.k.all),avg?fmt(avg)+' km per in-house trip':'no km logged')+
-    tile('Maintenance',peso(t.m.all),t.m.all?peso(t.m.all/Math.max(1,t.t.all))+' per trip · '+peso(t.m.in)+' in house':'none recorded')+
+    tile('Maintenance recovery',peso(t.m.all),t.m.all?peso(t.m.all/Math.max(1,t.t.all))+' per trip · '+peso(t.m.in)+' in house':'none recorded')+
     tile('In House VRs',fmt(inV),Math.round(inV/s*100)+'% of VRs · '+fmt(t.t.in)+' trips','<div class="share"><i class="a" style="width:'+(inV/s*100)+'%"></i><i class="b" style="width:'+(outV/s*100)+'%;opacity:.25"></i></div>','in')+
     tile('Out Source VRs',fmt(outV),Math.round(outV/s*100)+'% of VRs · '+fmt(t.t.out)+' trips','<div class="share"><i class="a" style="width:'+(inV/s*100)+'%;opacity:.25"></i><i class="b" style="width:'+(outV/s*100)+'%"></i></div>','out')}
 
@@ -479,12 +479,12 @@ function renderDrvTable(){
   const rows=rowsFor('drv');const m=group(rows,r=>r.driver);
   const arr=[...m].sort((a,b)=>b[1].k.all-a[1].k.all||b[1].t.all-a[1].t.all);
   const act=F.drv.size>0;
-  $('#drvTable').innerHTML=arr.length?'<table><thead><tr><th>Driver</th><th class="r">VRs</th><th class="r">Trips</th><th class="r">km used</th><th class="r">km / trip</th><th class="r">Maintenance</th></tr></thead><tbody>'+arr.map(([k,g])=>'<tr class="click'+(act&&!F.drv.has(k)?' dim':'')+'" data-bk="drv" data-bv="'+esc(k)+'"><td>'+esc(k)+(g.v.out.size&&!g.v.in.size?' <span class="pill">Outsourced</span>':'')+'</td><td class="r num">'+fmt(g.v.all.size)+'</td><td class="r num">'+fmt(g.t.all)+'</td><td class="r num"><b>'+fmt(g.k.all)+'</b></td><td class="r num">'+(g.t.all&&g.k.all?fmt(g.k.all/g.t.all):'–')+'</td><td class="r num">'+(g.m.all?peso(g.m.all):'–')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">'+emptyMsg()+'</div>'}
+  $('#drvTable').innerHTML=arr.length?'<table><thead><tr><th>Driver</th><th class="r">VRs</th><th class="r">Trips</th><th class="r">km used</th><th class="r">km / trip</th><th class="r">Maint. recovery</th></tr></thead><tbody>'+arr.map(([k,g])=>'<tr class="click'+(act&&!F.drv.has(k)?' dim':'')+'" data-bk="drv" data-bv="'+esc(k)+'"><td>'+esc(k)+(g.v.out.size&&!g.v.in.size?' <span class="pill">Outsourced</span>':'')+'</td><td class="r num">'+fmt(g.v.all.size)+'</td><td class="r num">'+fmt(g.t.all)+'</td><td class="r num"><b>'+fmt(g.k.all)+'</b></td><td class="r num">'+(g.t.all&&g.k.all?fmt(g.k.all/g.t.all):'–')+'</td><td class="r num">'+(g.m.all?peso(g.m.all):'–')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">'+emptyMsg()+'</div>'}
 function renderOfficeTable(){
   const rows=rowsFor('office');const m=group(rows,r=>r.office);const t=newG();rows.forEach(r=>add(t,r));
   const arr=[...m].sort((a,b)=>b[1].v.all.size-a[1].v.all.size);
   const tr=(n,g,cls,attr)=>'<tr class="'+cls+'" '+attr+'><td>'+esc(n)+'</td><td class="r num">'+fmt(g.v.all.size)+'</td><td class="r num">'+fmt(g.v.in.size)+'</td><td class="r num">'+fmt(g.v.out.size)+'</td><td class="r num">'+fmt(g.t.all)+'</td><td class="r num">'+fmt(g.k.all)+'</td><td class="r num">'+peso(g.m.all)+'</td></tr>';
-  $('#officeTable').innerHTML=arr.length?'<table><thead><tr><th>Office in charge</th><th class="r">VRs</th><th class="r">In House VRs</th><th class="r">Out Source VRs</th><th class="r">Trips</th><th class="r">Kilometers</th><th class="r">Maintenance</th></tr></thead><tbody>'+
+  $('#officeTable').innerHTML=arr.length?'<table><thead><tr><th>Office in charge</th><th class="r">VRs</th><th class="r">In House VRs</th><th class="r">Out Source VRs</th><th class="r">Trips</th><th class="r">Kilometers</th><th class="r">Maint. recovery</th></tr></thead><tbody>'+
     arr.map(([k,g])=>tr(k,g,'click','data-bk="office" data-bv="'+esc(k)+'"')).join('')+tr('Total',t,'tot','')+'</tbody></table>':'<div class="empty">'+emptyMsg()+'</div>'}
 function renderVrTable(rows){
   const m=new Map();
@@ -493,7 +493,7 @@ function renderVrTable(rows){
   const num_=['trips','km','maint'].includes(sortKey);
   arr.sort((a,b)=>(num_?a[sortKey]-b[sortKey]:String(a[sortKey]).localeCompare(String(b[sortKey]),undefined,{numeric:true}))*sortDir);
   const PS=12,pages=Math.max(1,Math.ceil(arr.length/PS));page=Math.min(page,pages-1);
-  const cols=[['vr','VR no.'],['req','Requestor'],['office','Office in charge'],['loc','Location'],['type','VR type'],['driver','Driver'],['dest','Destination'],['trips','Trips',1],['km','km',1],['maint','Maintenance',1],['dep','Departure → return'],['purpose','Purpose']];
+  const cols=[['vr','VR no.'],['req','Requestor'],['office','Office in charge'],['loc','Location'],['type','VR type'],['driver','Driver'],['dest','Destination'],['trips','Trips',1],['km','km',1],['maint','Maint. recovery',1],['dep','Departure → return'],['purpose','Purpose']];
   const th=cols.map(([k,n,r])=>'<th class="'+(r?'r':'')+'"><button type="button" data-sort="'+k+'">'+n+(sortKey===k?(sortDir>0?' ▲':' ▼'):'')+'</button></th>').join('');
   $('#vrTable').innerHTML=arr.length?'<table><thead><tr>'+th+'</tr></thead><tbody>'+arr.slice(page*PS,page*PS+PS).map(o=>'<tr><td class="num" style="white-space:nowrap">'+esc(o.vr)+'</td><td>'+esc(o.req)+'</td><td>'+esc(o.office)+'</td><td>'+esc(o.loc)+'</td><td>'+typePill(o.type)+'</td><td>'+esc(o.driver)+'</td><td>'+esc(o.dest)+'</td><td class="r num">'+fmt(o.trips)+'</td><td class="r num">'+fmt(o.km)+'</td><td class="r num">'+(o.maint?peso(o.maint):'–')+'</td><td class="num" style="white-space:nowrap">'+esc(o.dep)+'</td><td><div class="purpose" title="'+esc(o.purpose)+'">'+esc(o.purpose)+'</div></td></tr>').join('')+'</tbody></table>':'<div class="empty">'+emptyMsg()+'</div>';
   $('#vrCount').textContent=fmt(arr.length)+' VRs';

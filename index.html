@@ -71,7 +71,8 @@ body.dragging .drop{border-color:var(--inhouse);background:var(--soft)}
 .fchip:hover{border-color:var(--outsrc)}
 .fchip span{color:var(--muted)}
 
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media (max-width:640px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .kpi{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;min-width:0}
 .kpi .k{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:flex;align-items:center;gap:6px}
 .kpi .v{font-family:var(--f-head);font-weight:600;font-size:38px;overflow-wrap:anywhere;line-height:1.05;font-variant-numeric:tabular-nums;margin-top:2px}
@@ -151,6 +152,7 @@ button.kpi{text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%}
       <p id="subtitle"></p>
     </div>
     <div class="actions">
+      <button class="btn" id="dl" type="button">Download Excel report</button>
       <button class="btn primary" id="pick" type="button">Upload monthly file</button>
       <input id="file" type="file" accept=".xlsx,.xls,.csv" multiple hidden>
     </div>
@@ -159,6 +161,12 @@ button.kpi{text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%}
   <section class="drop" id="drop" aria-label="Data files">
     <div class="hint" id="hint"></div>
     <div class="periods" id="periods"></div>
+    <div class="periods" aria-label="Backup">
+      <span class="plabel">Backup</span>
+      <button class="btn" id="bkup" type="button" style="padding:6px 12px">Back up data</button>
+      <button class="btn" id="bkrest" type="button" style="padding:6px 12px">Restore backup</button>
+      <input id="bkfile" type="file" accept=".json,application/json" hidden>
+    </div>
   </section>
 
   <section class="controls" aria-label="Filters">
@@ -226,7 +234,7 @@ button.kpi{text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%}
     </div>
     <div class="panel">
       <div class="phead"><h2>Unserved VRs</h2><span class="note" id="unsCount"></span></div>
-      <div class="sub">VR numbers that have a Trip count of 0. A VR number is listed once, however many rows it has.</div>
+      <div class="sub">VR numbers with a Trip count of 0 on every row, so no trip was made. Each VR number is listed once.</div>
       <div class="tw" id="unsTable"></div>
     </div>
     <div class="panel">
@@ -358,12 +366,12 @@ function load(){let ok=false;try{const s=localStorage.getItem(KEY);if(s){JSON.pa
 
 /* ---------- aggregation ---------- */
 function newG(){return{v:{all:new Set(),in:new Set(),out:new Set()},u:{all:new Set(),in:new Set(),out:new Set()},t:{all:0,in:0,out:0},k:{all:0,in:0,out:0},m:{all:0,in:0,out:0}}}
-function add(g,r){const s=r.type==='Out Source'?'out':'in';g.v.all.add(r.vr);g.v[s].add(r.vr);g.t.all+=r.trip;g.t[s]+=r.trip;if(r.trip===0){g.u.all.add(r.vr);g.u[s].add(r.vr)}g.k.all+=r.km;g.k[s]+=r.km;const mm=r.maint||0;g.m.all+=mm;g.m[s]+=mm}
+function add(g,r){const s=r.type==='Out Source'?'out':'in';g.v.all.add(r.vr);g.v[s].add(r.vr);g.t.all+=r.trip;g.t[s]+=r.trip;if(UNS.has(r.vr)){g.u.all.add(r.vr);g.u[s].add(r.vr)}g.k.all+=r.km;g.k[s]+=r.km;const mm=r.maint||0;g.m.all+=mm;g.m[s]+=mm}
 function group(rows,fn){const m=new Map();rows.forEach(r=>{const k=fn(r);if(k==null)return;let g=m.get(k);if(!g){g=newG();m.set(k,g)}add(g,r)});return m}
 function val(g,m,s){return m==='vr'?g.v[s].size:m==='trip'?g.t[s]:m==='km'?g.k[s]:g.m[s]}
 function allRows(){const out=[];Object.values(datasets).forEach(d=>{if(!F.period.size||F.period.has(d.period))out.push(...d.rows)});return out}
 function match(r,excl){
-  if(F.uns&&r.trip!==0)return false;
+  if(F.uns&&!UNS.has(r.vr))return false;
   for(const k in FIELD){if(k!==excl&&F[k].size&&!F[k].has(r[FIELD[k]]))return false}
   if(F.q){const s=(r.vr+' '+r.req+' '+r.purpose+' '+r.driver+' '+r.office+' '+(r.dest||'')).toLowerCase();if(!s.includes(F.q))return false}
   return true}
@@ -373,7 +381,7 @@ function tipHtml(title,g){
   return '<b>'+esc(title)+'</b><table><tr><th></th><th>VRs</th><th>Trips</th><th>Unserved</th><th>km</th><th>Recovery</th></tr>'+row('All','all')+row('In House','in')+row('Out Source','out')+'</table>'}
 
 /* ---------- render ---------- */
-function computeUns(){}
+function computeUns(){const s=new Map();allRows().forEach(r=>s.set(r.vr,(s.get(r.vr)||0)+(+r.trip||0)));UNS=new Set([...s].filter(([k,v])=>v===0).map(([k])=>k))}
 function render(){
   computeUns();
   const ds=Object.values(datasets).sort((a,b)=>a.period<b.period?-1:1);
@@ -384,7 +392,7 @@ function render(){
   renderData(ds);renderControls();renderKpis(tot);renderTrend(rows);
   renderBars('#locBars','loc',r=>r.loc,8);renderBars('#officeBars','office',r=>r.office,10);renderBars('#reqBars','req',r=>r.req,10);renderBars('#drvBars','drv',r=>r.driver,10);renderDrvTable();renderBars('#dstBars','dst',r=>r.dest,18);renderMap();
   renderOfficeTable();renderUnserved(rows);renderVrTable(rows);
-  $('#foot').textContent='VR count is the number of distinct VR numbers: a VR number that appears on many rows counts once. Trip count adds up the Trip count column. Unserved VRs are distinct VR numbers with a Trip count of 0. Kilometers add up KM Total. Maintenance recovery adds up the Maintenance column, in pesos. Destinations are read from place names in the Purpose text unless the file has a Destination column.'}
+  $('#foot').textContent='VR count is the number of distinct VR numbers: a VR number that appears on many rows counts once. Trip count adds up the Trip count column. Unserved VRs are VR numbers whose Trip count is 0 on every row. Kilometers add up KM Total. Maintenance recovery adds up the Maintenance column, in pesos. Destinations are read from place names in the Purpose text unless the file has a Destination column.'}
 function renderData(ds){
   const s=ds.some(d=>d.sample);
   $('#hint').innerHTML=!ds.length?'<b>Nothing loaded.</b> Drop your monthly VR file here or use Upload.<br><button type="button" class="btn ghost" id="loadsample" style="margin-top:6px;padding:4px 10px">Load the sample file</button>':s?'<b>Showing the sample September file.</b> <span class="tag">Sample</span><br>Drop your monthly VR file here or use Upload. Uploading a month that is already loaded replaces it.'
@@ -408,10 +416,9 @@ function renderKpis(t){
   const tile=(k,v,sub,extra,dot,attr)=>'<'+(attr?'button type="button" '+attr+' class="kpi click'+(F.uns?' on':'')+'"':'div class="kpi"')+'><div class="k">'+(dot?'<i class="dot '+dot+'"></i>':'')+k+'</div><div class="v">'+v+'</div><div class="s">'+sub+'</div>'+(extra||'')+(attr?'</button>':'</div>');
   $('#kpis').innerHTML=
     tile('VR count',fmt(tv),'distinct VR numbers')+
-    tile('Unserved VRs',fmt(uns),'trip count 0 · '+(tv?(uns/tv*100).toFixed(1):'0')+'% of VRs'+(uns?' · click to list':''),'',null,'data-uns')+
+    tile('Unserved VRs',fmt(uns),'no trips made · '+(tv?(uns/tv*100).toFixed(1):'0')+'% of VRs'+(uns?' · click to list':''),'',null,'data-uns')+
     tile('Trip count',fmt(t.t.all),fmt(t.t.in)+' in house · '+fmt(t.t.out)+' outsourced')+
     tile('Kilometers',fmt(t.k.all),avg?fmt(avg)+' km per in-house trip':'no km logged')+
-    tile('Maintenance recovery',peso(t.m.all),t.m.all?peso(t.m.all/Math.max(1,t.t.all))+' per trip · '+peso(t.m.in)+' in house':'none recorded')+
     tile('In House VRs',fmt(inV),Math.round(inV/s*100)+'% of VRs · '+fmt(t.t.in)+' trips','<div class="share"><i class="a" style="width:'+(inV/s*100)+'%"></i><i class="b" style="width:'+(outV/s*100)+'%;opacity:.25"></i></div>','in')+
     tile('Out Source VRs',fmt(outV),Math.round(outV/s*100)+'% of VRs · '+fmt(t.t.out)+' trips','<div class="share"><i class="a" style="width:'+(inV/s*100)+'%;opacity:.25"></i><i class="b" style="width:'+(outV/s*100)+'%"></i></div>','out')}
 
@@ -488,10 +495,10 @@ function renderMap(){
     boxes.push(b);s+='<text class="mlab" x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" text-anchor="'+(left?'end':'start')+'">'+esc(p.k)+'</text>'});
   el.innerHTML=s+'</svg>'}
 function renderUnserved(rows){
-  const m=new Map();rows.forEach(r=>{if(r.trip!==0)return;let o=m.get(r.vr);if(!o){o={...r,zero:0};m.set(r.vr,o)}o.zero++});
+  const m=new Map();rows.forEach(r=>{if(!UNS.has(r.vr))return;let o=m.get(r.vr);if(!o){o={...r,zero:0};m.set(r.vr,o)}o.zero++});
   const arr=[...m.values()].sort((a,b)=>a.vr.localeCompare(b.vr,undefined,{numeric:true}));
   $('#unsCount').textContent=fmt(arr.length)+' VR'+(arr.length===1?'':'s');
-  $('#unsTable').innerHTML=arr.length?'<table><thead><tr><th>VR no.</th><th>Requestor</th><th>Office in charge</th><th>Location</th><th>VR type</th><th>Driver</th><th>Destination</th><th class="r">Rows with 0 trips</th><th>Departure → return</th><th>Purpose</th></tr></thead><tbody>'+arr.map(o=>'<tr><td class="num" style="white-space:nowrap">'+esc(o.vr)+'</td><td>'+esc(o.req)+'</td><td>'+esc(o.office)+'</td><td>'+esc(o.loc)+'</td><td>'+typePill(o.type)+'</td><td>'+esc(o.driver)+'</td><td>'+esc(o.dest)+'</td><td class="r num">'+fmt(o.zero)+'</td><td class="num" style="white-space:nowrap">'+esc(o.dep)+'</td><td><div class="purpose" title="'+esc(o.purpose)+'">'+esc(o.purpose)+'</div></td></tr>').join('')+'</tbody></table>':'<div class="empty">'+(Object.keys(datasets).length?'No unserved VRs. No row has a trip count of 0.':emptyMsg())+'</div>'}
+  $('#unsTable').innerHTML=arr.length?'<table><thead><tr><th>VR no.</th><th>Requestor</th><th>Office in charge</th><th>Location</th><th>VR type</th><th>Driver</th><th>Destination</th><th class="r">Rows</th><th>Departure → return</th><th>Purpose</th></tr></thead><tbody>'+arr.map(o=>'<tr><td class="num" style="white-space:nowrap">'+esc(o.vr)+'</td><td>'+esc(o.req)+'</td><td>'+esc(o.office)+'</td><td>'+esc(o.loc)+'</td><td>'+typePill(o.type)+'</td><td>'+esc(o.driver)+'</td><td>'+esc(o.dest)+'</td><td class="r num">'+fmt(o.zero)+'</td><td class="num" style="white-space:nowrap">'+esc(o.dep)+'</td><td><div class="purpose" title="'+esc(o.purpose)+'">'+esc(o.purpose)+'</div></td></tr>').join('')+'</tbody></table>':'<div class="empty">'+(Object.keys(datasets).length?'No unserved VRs. Every VR has at least one trip.':emptyMsg())+'</div>'}
 function renderDrvTable(){
   const rows=rowsFor('drv');const m=group(rows,r=>r.driver);
   const arr=[...m].sort((a,b)=>b[1].k.all-a[1].k.all||b[1].t.all-a[1].t.all);
@@ -512,9 +519,90 @@ function renderVrTable(rows){
   const PS=12,pages=Math.max(1,Math.ceil(arr.length/PS));page=Math.min(page,pages-1);
   const cols=[['vr','VR no.'],['req','Requestor'],['office','Office in charge'],['loc','Location'],['type','VR type'],['driver','Driver'],['dest','Destination'],['trips','Trips',1],['km','km',1],['maint','Maint. recovery',1],['dep','Departure → return'],['purpose','Purpose']];
   const th=cols.map(([k,n,r])=>'<th class="'+(r?'r':'')+'"><button type="button" data-sort="'+k+'">'+n+(sortKey===k?(sortDir>0?' ▲':' ▼'):'')+'</button></th>').join('');
-  $('#vrTable').innerHTML=arr.length?'<table><thead><tr>'+th+'</tr></thead><tbody>'+arr.slice(page*PS,page*PS+PS).map(o=>'<tr><td class="num" style="white-space:nowrap">'+esc(o.vr)+(o.zero?' <span class="pill">'+(o.trips===0?'Unserved':'Partly unserved')+'</span>':'')+'</td><td>'+esc(o.req)+'</td><td>'+esc(o.office)+'</td><td>'+esc(o.loc)+'</td><td>'+typePill(o.type)+'</td><td>'+esc(o.driver)+'</td><td>'+esc(o.dest)+'</td><td class="r num">'+fmt(o.trips)+'</td><td class="r num">'+fmt(o.km)+'</td><td class="r num">'+(o.maint?peso(o.maint):'–')+'</td><td class="num" style="white-space:nowrap">'+esc(o.dep)+'</td><td><div class="purpose" title="'+esc(o.purpose)+'">'+esc(o.purpose)+'</div></td></tr>').join('')+'</tbody></table>':'<div class="empty">'+emptyMsg()+'</div>';
+  $('#vrTable').innerHTML=arr.length?'<table><thead><tr>'+th+'</tr></thead><tbody>'+arr.slice(page*PS,page*PS+PS).map(o=>'<tr><td class="num" style="white-space:nowrap">'+esc(o.vr)+(UNS.has(o.vr)?' <span class="pill">Unserved</span>':'')+'</td><td>'+esc(o.req)+'</td><td>'+esc(o.office)+'</td><td>'+esc(o.loc)+'</td><td>'+typePill(o.type)+'</td><td>'+esc(o.driver)+'</td><td>'+esc(o.dest)+'</td><td class="r num">'+fmt(o.trips)+'</td><td class="r num">'+fmt(o.km)+'</td><td class="r num">'+(o.maint?peso(o.maint):'–')+'</td><td class="num" style="white-space:nowrap">'+esc(o.dep)+'</td><td><div class="purpose" title="'+esc(o.purpose)+'">'+esc(o.purpose)+'</div></td></tr>').join('')+'</tbody></table>':'<div class="empty">'+emptyMsg()+'</div>';
   $('#vrCount').textContent=fmt(arr.length)+' VRs';
   $('#pager').innerHTML=arr.length>PS?'<button class="btn" type="button" data-pg="-1"'+(page===0?' disabled':'')+'>Previous</button><span>Page '+(page+1)+' of '+pages+'</span><button class="btn" type="button" data-pg="1"'+(page>=pages-1?' disabled':'')+'>Next</button>':''}
+
+/* ---------- backup and restore ---------- */
+function backupData(){
+  const keep=Object.values(datasets).filter(d=>!d.sample);
+  if(!keep.length){toast('There is nothing to back up yet. Upload a monthly file first.',1);return}
+  try{
+    const payload={app:'vr-monitor',version:1,exported:new Date().toISOString(),datasets:keep};
+    const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);const a=document.createElement('a');
+    const name='VR_Monitor_backup_'+new Date().toISOString().slice(0,10)+'.json';
+    a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
+    toast('Backup created: '+name+' ('+keep.length+' month'+(keep.length>1?'s':'')+')')
+  }catch(e){toast('Could not create the backup.',1)}}
+function restoreData(file){
+  const fr=new FileReader();
+  fr.onerror=()=>toast('Could not read that file.',1);
+  fr.onload=()=>{
+    try{
+      const j=JSON.parse(fr.result);
+      if(!j||j.app!=='vr-monitor'||!Array.isArray(j.datasets))throw new Error('format');
+      let n=0,rows=0;const next={};
+      j.datasets.forEach(d=>{
+        if(!d||!/^\d{4}-\d{2}$/.test(d.period)||!Array.isArray(d.rows))return;
+        const rs=d.rows.filter(r=>r&&r.vr).map(r=>({vr:String(r.vr),req:String(r.req||'(blank)'),purpose:String(r.purpose||''),dep:String(r.dep||''),office:String(r.office||'(blank)'),loc:String(r.loc||'(blank)'),
+          type:r.type==='Out Source'?'Out Source':'In House',driver:String(r.driver||'(no driver)'),date:r.date||null,km:num(r.km),trip:num(r.trip),maint:num(r.maint),
+          dest:r.dest||computeDest('',r.purpose,r.office,r.loc),period:d.period}));
+        if(!rs.length)return;next[d.period]={period:d.period,file:String(d.file||'backup'),sample:false,rows:rs};n++;rows+=rs.length});
+      if(!n)throw new Error('empty');
+      Object.keys(datasets).forEach(k=>{if(datasets[k].sample)delete datasets[k]});
+      Object.assign(datasets,next);F.period.clear();askDel=null;page=0;save();render();
+      toast('Restored '+n+' month'+(n>1?'s':'')+' ('+fmt(rows)+' rows). Months with the same name were replaced.')
+    }catch(e){toast('That is not a backup made by this dashboard. Choose a VR_Monitor_backup .json file.',1)}};
+  fr.readAsText(file)}
+
+/* ---------- excel report ---------- */
+function exportReport(){
+  const rows=rowsFor(null);
+  if(!rows.length){toast('There is nothing to export. Upload a file or clear the filters.',1);return}
+  if(!window.XLSX){toast('The spreadsheet writer did not load. Check your internet connection and reload the page.',1);return}
+  try{
+    const wb=XLSX.utils.book_new();
+    const ds=Object.values(datasets).sort((a,b)=>a.period<b.period?-1:1);
+    const periods=F.period.size?[...F.period].sort():ds.map(d=>d.period);
+    const plab=periods.map(plabel).join(', ');
+    const tot=newG();rows.forEach(r=>add(tot,r));
+    const filt=[];['period','office','loc','req','drv','dst'].forEach(k=>{if(F[k].size)filt.push(FNAME[k]+': '+[...F[k]].map(v=>k==='period'?plabel(v):v).join(', '))});
+    if(F.type.size)filt.push('VR type: '+[...F.type].join(', '));if(F.uns)filt.push('Unserved VRs only');if(F.q)filt.push('Search: '+F.q);
+    const sum=[['Vehicle Request Report'],['Period',plab],['Generated',new Date().toISOString().slice(0,10)],['Filters applied',filt.length?filt.join(' | '):'None'],[],
+      ['Measure','Total','In House','Out Source'],
+      ['VR count (distinct VR numbers)',tot.v.all.size,tot.v.in.size,tot.v.out.size],
+      ['Unserved VRs (no trips)',tot.u.all.size,tot.u.in.size,tot.u.out.size],
+      ['Trip count',tot.t.all,tot.t.in,tot.t.out],
+      ['Kilometers',tot.k.all,tot.k.in,tot.k.out],
+      ['Maintenance recovery (PHP)',tot.m.all,tot.m.in,tot.m.out]];
+    const s0=XLSX.utils.aoa_to_sheet(sum);s0['!cols']=[{wch:34},{wch:60},{wch:14},{wch:14}];XLSX.utils.book_append_sheet(wb,s0,'Summary');
+    const head=n=>[n,'VRs','In House VRs','Out Source VRs','Unserved VRs','Trips','In House trips','Out Source trips','Kilometers','In House km','Out Source km','Maintenance recovery'];
+    const line=(k,g)=>[k,g.v.all.size,g.v.in.size,g.v.out.size,g.u.all.size,g.t.all,g.t.in,g.t.out,g.k.all,g.k.in,g.k.out,g.m.all];
+    const dim=(name,title,fn)=>{
+      const m=[...group(rows,fn)].sort((a,b)=>b[1].v.all.size-a[1].v.all.size||String(a[0]).localeCompare(String(b[0])));
+      const aoa=[head(title),...m.map(([k,g])=>line(k,g)),line('Total',tot)];
+      const ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=[{wch:34},...Array(11).fill({wch:15})];ws['!freeze']={xSplit:0,ySplit:1};XLSX.utils.book_append_sheet(wb,ws,name)};
+    dim('By Office','Office in charge',r=>r.office);
+    dim('By Location Type','Location type',r=>r.loc);
+    dim('By Requestor','Requestor',r=>r.req);
+    dim('By Driver','Driver',r=>r.driver);
+    dim('By Destination','Destination',r=>r.dest);
+    if(periods.length>1)dim('By Month','Month',r=>plabel(r.period));
+    const m=new Map();
+    rows.forEach(r=>{let o=m.get(r.vr);if(!o){o={vr:r.vr,period:r.period,req:r.req,office:r.office,loc:r.loc,types:new Set(),drivers:new Set(),dest:r.dest,trips:0,km:0,maint:0,dep:r.dep,purpose:r.purpose};m.set(r.vr,o)}
+      o.types.add(r.type);o.drivers.add(r.driver);o.trips+=r.trip;o.km+=r.km;o.maint+=r.maint||0});
+    const vl=[...m.values()].sort((a,b)=>a.vr.localeCompare(b.vr,undefined,{numeric:true}));
+    const vaoa=[['VR number','Month','Requestor','Office in charge','Location type','VR type','Driver','Destination','Trip count','Kilometers','Maintenance recovery','Status','Departure / return','Purpose'],
+      ...vl.map(o=>[o.vr,plabel(o.period),o.req,o.office,o.loc,o.types.size>1?'Both':[...o.types][0],[...o.drivers].join('; '),o.dest,o.trips,o.km,o.maint,UNS.has(o.vr)?'Unserved':'Served',o.dep,o.purpose])];
+    const w1=XLSX.utils.aoa_to_sheet(vaoa);w1['!cols']=[{wch:16},{wch:16},{wch:24},{wch:18},{wch:12},{wch:11},{wch:28},{wch:26},{wch:11},{wch:11},{wch:12},{wch:10},{wch:36},{wch:60}];
+    w1['!autofilter']={ref:'A1:N'+vaoa.length};XLSX.utils.book_append_sheet(wb,w1,'VR List');
+    const un=vaoa.filter((r,i)=>i>0&&r[11]==='Unserved');
+    const w2=XLSX.utils.aoa_to_sheet([vaoa[0],...un]);w2['!cols']=w1['!cols'];XLSX.utils.book_append_sheet(wb,w2,'Unserved VRs');
+    const name='VR_Report_'+(periods.length===1?periods[0]:periods.length?periods[0]+'_to_'+periods[periods.length-1]:'all')+'.xlsx';
+    XLSX.writeFile(wb,name);
+    toast('Report created: '+name+' ('+vl.length+' VRs, '+(wb.SheetNames.length)+' sheets)')
+  }catch(e){toast('Could not create the Excel report. Try reloading the page.',1)}}
 
 /* ---------- interaction ---------- */
 function toggle(k,v){const s=F[k];s.has(v)?s.delete(v):s.add(v);page=0;render()}
@@ -534,8 +622,12 @@ document.addEventListener('click',e=>{
   if(b=t.closest('[data-sort]')){const k=b.dataset.sort;if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=['trips','km','maint'].includes(k)?-1:1}return render()}
   if(b=t.closest('[data-pg]')){page=Math.max(0,page+ +b.dataset.pg);return render()}
   if(t.closest('#loadsample')){const d=sampleDataset();datasets[d.period]=d;save();return render()}
+  if(t.closest('#dl'))return exportReport();
+  if(t.closest('#bkup'))return backupData();
+  if(t.closest('#bkrest'))return $('#bkfile').click();
   if(t.closest('#pick'))$('#file').click()});
 $('#file').addEventListener('change',e=>{handleFiles([...e.target.files]);e.target.value=''});
+$('#bkfile').addEventListener('change',e=>{if(e.target.files[0])restoreData(e.target.files[0]);e.target.value=''});
 $('#q').addEventListener('input',e=>{F.q=e.target.value.trim().toLowerCase();page=0;render()});
 let dragN=0;
 addEventListener('dragenter',e=>{e.preventDefault();dragN++;document.body.classList.add('dragging')});
